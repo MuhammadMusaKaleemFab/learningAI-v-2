@@ -56,7 +56,9 @@ _IMG_SIZE = 1024
 _CONF_PASS1 = 0.20
 _CONF_PASS2 = 0.15
 _TABLE_PAD_PX = 4
-_CROP_PAD_FRAC = 0.03     # padding added to every returned figure box
+_CROP_PAD_FRAC = 0.015    # small padding around figure boxes: enough not to clip
+                          # edge labels, small enough to rarely pull in an
+                          # adjacent line of body text (task 1: reduce text bleed)
 
 # Minimum confidence for a `figure` detection to be kept. On this project's real
 # pages, genuine diagrams scored 0.73-0.96 while equation/text false positives

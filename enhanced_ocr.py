@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
@@ -235,26 +236,52 @@ def _normalize_media_type(content_type_header: str, body: bytes) -> str:
     return _sniff_media_type(body)
 
 
-def download_image(url: str, *, timeout_s: float = 60.0) -> tuple[bytes, str]:
-    """Fetch an image URL → ``(body_bytes, media_type)``."""
-    headers = {"User-Agent": "LearningPlatform-StructuredOCR/1.0"}
-    try:
-        with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
-            r = client.get(url, headers=headers)
-            r.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        raise ImageDownloadError(
-            f"HTTP {e.response.status_code} downloading image "
-            f"(URL may be expired): {url[:120]}..."
-        ) from e
-    except httpx.RequestError as e:
-        raise ImageDownloadError(f"Network error downloading image: {e}") from e
+def download_image(
+    url: str,
+    *,
+    timeout_s: float = 60.0,
+    max_attempts: int = 3,
+    backoff_s: float = 1.5,
+) -> tuple[bytes, str]:
+    """Fetch an image URL → ``(body_bytes, media_type)``.
 
-    body = r.content
-    if not body:
-        raise ImageDownloadError("Empty image body.")
-    media_type = _normalize_media_type(r.headers.get("content-type", ""), body)
-    return body, media_type
+    Transient network problems (timeouts, dropped connections, SSL handshake
+    timeouts) are retried up to ``max_attempts`` times with linear backoff,
+    since these usually succeed on a second try. HTTP status errors (403/404,
+    e.g. an expired URL) are NOT retried — they won't fix themselves.
+    """
+    headers = {"User-Agent": "LearningPlatform-StructuredOCR/1.0"}
+    last_err: Optional[Exception] = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
+                r = client.get(url, headers=headers)
+                r.raise_for_status()
+            body = r.content
+            if not body:
+                raise ImageDownloadError("Empty image body.")
+            media_type = _normalize_media_type(r.headers.get("content-type", ""), body)
+            return body, media_type
+        except httpx.HTTPStatusError as e:
+            # not transient — don't retry an expired/forbidden URL
+            raise ImageDownloadError(
+                f"HTTP {e.response.status_code} downloading image "
+                f"(URL may be expired): {url[:120]}..."
+            ) from e
+        except (httpx.RequestError, ImageDownloadError) as e:
+            # transient (timeout, connection, SSL handshake, empty body) — retry
+            last_err = e
+            if attempt < max_attempts:
+                logger.warning(
+                    "Image download attempt %d/%d failed (%s); retrying in %.1fs",
+                    attempt, max_attempts, e, backoff_s * attempt,
+                )
+                time.sleep(backoff_s * attempt)
+
+    raise ImageDownloadError(
+        f"Network error downloading image after {max_attempts} attempts: {last_err}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -317,22 +344,51 @@ def _loads_lenient(text: str):
     return None
 
 
-def _coerce_stringified_json(raw: dict) -> dict:
-    """Repair tool input where a container field arrived as a JSON string.
+# Fields that MUST be a dict/object (not a list/string). If Claude mangles one
+# (e.g. returns the JS artifact ['object Object'] or a list), it's unrecoverable
+# — the real data is gone — so we null it out rather than fail the whole row.
+_OBJECT_FIELDS: tuple[str, ...] = ("source", "solution")
 
-    Returns a new dict; the original is left untouched. Only fields that are
-    *supposed* to be lists/objects are touched, and only when they are a string
-    that parses (strictly or after lenient backslash repair) into a list/dict —
-    otherwise the value is left as-is so validation can still report a
-    meaningful error.
+
+def _coerce_stringified_json(raw: dict) -> dict:
+    """Repair tool input where a container field arrived as a JSON string,
+    and null out object fields that came back unrecoverably malformed.
+
+    Returns a new dict; the original is left untouched.
+      * For list/object container fields: if the value is a JSON *string* that
+        parses (strictly or via lenient repair) into a list/dict, replace it.
+      * For object fields (source, solution): if the value is not a dict and
+        can't be coerced into one, set it to None — better to lose one field
+        than the entire row to a random model glitch.
     """
     fixed = dict(raw)
+
+    # 1) stringified containers -> parsed list/dict
     for key in _JSON_CONTAINER_FIELDS:
         val = fixed.get(key)
         if isinstance(val, str):
             parsed = _loads_lenient(val)
             if isinstance(parsed, (list, dict)):
                 fixed[key] = parsed
+
+    # 2) object fields must end up as dict-or-None
+    for key in _OBJECT_FIELDS:
+        if key not in fixed:
+            continue
+        val = fixed[key]
+        if val is None or isinstance(val, dict):
+            continue  # fine as-is
+        if isinstance(val, str):
+            parsed = _loads_lenient(val)
+            fixed[key] = parsed if isinstance(parsed, dict) else None
+        elif isinstance(val, list):
+            # a list where a dict was expected: salvage a single dict element if
+            # present (some models wrap the object in a 1-element list), else drop
+            dicts = [v for v in val if isinstance(v, dict)]
+            fixed[key] = dicts[0] if len(dicts) == 1 else None
+        else:
+            fixed[key] = None  # anything else is unrecoverable
+
     return fixed
 
 

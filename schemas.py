@@ -55,7 +55,9 @@ class Diagram(BaseModel):
     description: str    # detailed factual description — never invented detail
     labels: list[str] = Field(default_factory=list)  # vertex names, axis labels, side lengths, angles printed in the figure
     source_image_index: Optional[int] = None  # which input image (0-based) this diagram is on
-    bbox: Optional[list[float]] = None  # [x_min, y_min, x_max, y_max] as fractions 0-1 of that image
+    bbox: Optional[list[float]] = None  # [x_min, y_min, x_max, y_max] as fractions 0-1 of that image (from Claude; unreliable)
+    image_path: Optional[str] = None  # local path to the saved cropped diagram PNG (filled by the detector)
+    detected_bbox: Optional[list[float]] = None  # [x_min,y_min,x_max,y_max] fractions, from the layout detector (reliable)
 
     @field_validator("bbox")
     @classmethod
@@ -88,12 +90,12 @@ class ExamQuestion(BaseModel):
     """One exam question with structured stem, parts, diagrams, and worked solution."""
 
     question_number: Optional[str] = None
-    source: Source = Field(default_factory=Source)
+    source: Optional[Source] = Field(default_factory=Source)
     marks_total: Optional[int] = None
     stem: Optional[str] = None  # context text before part (a)
     parts: list[Part] = Field(default_factory=list)
     diagrams: list[Diagram] = Field(default_factory=list)
-    solution: Solution = Field(default_factory=Solution)
+    solution: Optional[Solution] = Field(default_factory=Solution)
     topics: list[str] = Field(default_factory=list)
     difficulty_hint: Optional[str] = None  # EASY | MEDIUM | HARD
     confidence: float = 0.0

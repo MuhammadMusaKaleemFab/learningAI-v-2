@@ -298,16 +298,21 @@ if st.session_state.preview_groups:
             st.error(str(e))
             st.stop()
 
-        total = len(groups)
+        # Match what run_batch will actually process: it re-parses the CSV and
+        # applies max_rows, so cap the preview group count by max_rows too.
+        total = min(len(groups), int(max_rows)) if max_rows else len(groups)
         completed = {"n": 0}
         started_at = time.monotonic()
 
         def _on_progress(r: RowResult) -> None:
             completed["n"] += 1
             done = completed["n"]
+            # total can be momentarily off if the preview was stale; never let
+            # the ratio exceed 1.0 (Streamlit rejects >1.0) or divide by zero.
+            denom = max(total, done, 1)
             elapsed = time.monotonic() - started_at
             rate = done / max(elapsed, 1e-3)
-            eta = (total - done) / max(rate, 1e-3)
+            eta = (denom - done) / max(rate, 1e-3)
             marker = "OK" if r.status == "ok" else "ERR"
             status_box.write(
                 f"[{marker}] row {r.row_index} - {r.status} "
@@ -315,8 +320,8 @@ if st.session_state.preview_groups:
                 + (f" - {r.error}" if r.error else "")
             )
             progress_bar.progress(
-                done / total,
-                text=f"{done}/{total} rows - ~{eta:.0f}s remaining",
+                min(1.0, done / denom),
+                text=f"{done}/{denom} rows - ~{eta:.0f}s remaining",
             )
 
         summary: BatchSummary = run_batch(
@@ -345,6 +350,25 @@ if st.session_state.preview_groups:
         )
 
 
+def _render_one_diagram(d: dict) -> None:
+    """Render a single diagram: its cropped image if we have one, else its text."""
+    img_path = d.get("image_path")
+    if img_path and Path(img_path).exists():
+        st.image(img_path, width=380)
+        cap = d.get("description") or ""
+        if cap:
+            st.caption(cap)
+    else:
+        # no crop available — fall back to the description
+        st.markdown(f"_{d.get('location', '?')}_: {d.get('description', '')}")
+
+
+def _diagrams_for(diagrams: list[dict], location: str) -> list[dict]:
+    """Diagrams whose `location` matches (case-insensitive, trimmed)."""
+    loc = (location or "").strip().lower()
+    return [d for d in diagrams if (d.get("location") or "").strip().lower() == loc]
+
+
 def _render_question_preview(q: dict) -> None:
     src = q.get("source") or {}
     src_bits = [src.get(k) for k in ("school", "year", "exam_type", "paper") if src.get(k)]
@@ -359,25 +383,45 @@ def _render_question_preview(q: dict) -> None:
     if header_bits:
         st.markdown(" ".join(header_bits))
 
+    diagrams = q.get("diagrams") or []
+    rendered_ids: set[int] = set()
+
     if q.get("stem"):
         st.markdown(q["stem"])
+    # stem diagram(s) appear right after the stem
+    for d in _diagrams_for(diagrams, "stem"):
+        _render_one_diagram(d)
+        rendered_ids.add(id(d))
 
     for part in q.get("parts") or []:
+        label = part.get("label", "")
         marks = f" _[{part['marks']} marks]_" if part.get("marks") else ""
-        st.markdown(f"**{part.get('label', '')}**{marks}")
+        st.markdown(f"**{label}**{marks}")
         if part.get("text"):
             st.markdown(part["text"])
+        # a diagram belonging to this part appears right after the part text
+        for d in _diagrams_for(diagrams, label):
+            _render_one_diagram(d)
+            rendered_ids.add(id(d))
         for sp in part.get("sub_parts") or []:
+            sp_label = sp.get("label", "")
             sp_marks = f" _[{sp['marks']} marks]_" if sp.get("marks") else ""
-            st.markdown(f"&nbsp;&nbsp;**{sp.get('label', '')}**{sp_marks}")
+            st.markdown(f"&nbsp;&nbsp;**{sp_label}**{sp_marks}")
             if sp.get("text"):
                 st.markdown(f"&nbsp;&nbsp;{sp['text']}")
+            for d in _diagrams_for(diagrams, sp_label):
+                _render_one_diagram(d)
+                rendered_ids.add(id(d))
 
-    diagrams = q.get("diagrams") or []
-    if diagrams:
-        st.markdown("**Diagrams**")
-        for d in diagrams:
-            st.markdown(f"- _{d.get('location', '?')}_: {d.get('description', '')}")
+    # any diagrams whose location didn't match a stem/part (e.g. solution
+    # diagrams, or "unknown") are shown together at the end so none are lost
+    leftover = [d for d in diagrams if id(d) not in rendered_ids]
+    if leftover:
+        st.markdown("**Other diagrams**")
+        for d in leftover:
+            loc = d.get("location", "?")
+            st.markdown(f"_{loc}_")
+            _render_one_diagram(d)
 
     sol = q.get("solution") or {}
     by_part = sol.get("by_part") or []

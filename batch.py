@@ -36,6 +36,7 @@ try:
     )
     from .image_store import LocalImageStore, SavedImage
     from .schemas import ExamQuestion, Source
+    from .diagram_attach import attach_diagram_crops
 except ImportError:  # flat layout: files are siblings, not in a package
     from enhanced_ocr import (  # type: ignore[no-redef]
         SchemaValidationError,
@@ -46,6 +47,7 @@ except ImportError:  # flat layout: files are siblings, not in a package
     )
     from image_store import LocalImageStore, SavedImage  # type: ignore[no-redef]
     from schemas import ExamQuestion, Source  # type: ignore[no-redef]
+    from diagram_attach import attach_diagram_crops  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +372,16 @@ def _process_row(
     question = _merge_source_from_label(question, first_label)
 
     result.status = "ok"
-    result.question = question.model_dump()
+    question_dict = question.model_dump()
+    # Detect, crop and attach diagram images (tasks 1-4). Only possible when we
+    # saved the source images this run. Safe no-op if detection unavailable.
+    if result.saved_image_paths:
+        question_dict = attach_diagram_crops(
+            question_dict,
+            result.saved_image_paths,
+            question_number=question_dict.get("question_number"),
+        )
+    result.question = question_dict
     result.raw_tool_input = ocr.raw_tool_input
     result.input_tokens = ocr.input_tokens
     result.output_tokens = ocr.output_tokens
