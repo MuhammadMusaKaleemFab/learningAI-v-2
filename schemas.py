@@ -36,13 +36,13 @@ class Source(BaseModel):
 
 class SubPart(BaseModel):
     label: str  # e.g. "(i)", "(ii)"
-    text: str   # LaTeX-ready markdown
+    text: str = ""   # LaTeX-ready markdown; may be empty if the sub-part is a pure container
     marks: Optional[int] = None
 
 
 class Part(BaseModel):
     label: str  # e.g. "(a)", "(b)"
-    text: str
+    text: str = ""  # may be empty when the part is just a container for sub_parts
     marks: Optional[int] = None
     sub_parts: list[SubPart] = Field(default_factory=list)
 
@@ -196,11 +196,11 @@ EXAM_QUESTION_TOOL_SCHEMA: dict = {
                                 "text": {"type": "string"},
                                 "marks": {"type": "integer", "minimum": 1},
                             },
-                            "required": ["label", "text"],
+                            "required": ["label"],
                         },
                     },
                 },
-                "required": ["label", "text"],
+                "required": ["label"],
             },
         },
         "diagrams": {
