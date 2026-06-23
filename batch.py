@@ -292,6 +292,7 @@ def _process_row(
     *,
     client: StructuredOcrClient,
     store: Optional[LocalImageStore] = None,
+    vectorize_diagrams: bool = False,
 ) -> RowResult:
     result = RowResult(
         row_index=group.row_index,
@@ -380,6 +381,7 @@ def _process_row(
             question_dict,
             result.saved_image_paths,
             question_number=question_dict.get("question_number"),
+            vectorize=vectorize_diagrams,
         )
     result.question = question_dict
     result.raw_tool_input = ocr.raw_tool_input
@@ -398,6 +400,7 @@ def run_batch(
     max_workers: int = 4,
     progress: Optional[ProgressCb] = None,
     image_dir: Optional[str] = None,
+    vectorize_diagrams: bool = False,
 ) -> BatchSummary:
     """Top-level entry point. Concurrency is per-row.
 
@@ -415,7 +418,7 @@ def run_batch(
 
     if max_workers <= 1:
         for i, group in enumerate(groups):
-            r = _process_row(group, client=client, store=store)
+            r = _process_row(group, client=client, store=store, vectorize_diagrams=vectorize_diagrams)
             summary.results[i] = r
             if progress:
                 progress(r)
@@ -425,7 +428,7 @@ def run_batch(
         max_workers=max_workers, thread_name_prefix="enhanced-ocr"
     ) as ex:
         futures = {
-            ex.submit(_process_row, group, client=client, store=store): i
+            ex.submit(_process_row, group, client=client, store=store, vectorize_diagrams=vectorize_diagrams): i
             for i, group in enumerate(groups)
         }
         for fut in as_completed(futures):

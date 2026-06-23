@@ -7,3 +7,5 @@ opencv-python-headless>=4.8
 doclayout-yolo>=0.0.3
 huggingface_hub>=0.23
 json_repair>=0.30
+vtracer>=0.6
+cairosvg>=2.7

@@ -219,6 +219,16 @@ with st.sidebar:
         disabled=not save_images,
         help="Images are saved under this folder, organised by row.",
     )
+    vectorize_diagrams = st.checkbox(
+        "Vectorize diagrams (sharper lines)",
+        value=False,
+        disabled=not save_images,
+        help=(
+            "Trace each diagram crop to vectors and render a high-res version. "
+            "Makes LINES crisp (geometry, graphs); does NOT sharpen small text. "
+            "Both original and vectorized are kept so you can compare."
+        ),
+    )
 
     st.divider()
     st.caption(
@@ -331,6 +341,7 @@ if st.session_state.preview_groups:
             max_workers=int(max_workers),
             progress=_on_progress,
             image_dir=(image_dir.strip() or "saved_images") if save_images else None,
+            vectorize_diagrams=vectorize_diagrams,
         )
         progress_bar.empty()
         status_box.empty()
@@ -351,15 +362,25 @@ if st.session_state.preview_groups:
 
 
 def _render_one_diagram(d: dict) -> None:
-    """Render a single diagram: its cropped image if we have one, else its text."""
+    """Render a single diagram: its cropped image if we have one, else its text.
+    If a vectorized version exists, show it too (sharper lines)."""
     img_path = d.get("image_path")
+    vec_path = d.get("vector_path")
+    shown = False
+    if vec_path and Path(vec_path).exists():
+        st.image(vec_path, width=420)
+        st.caption("vectorized (sharper lines)")
+        shown = True
     if img_path and Path(img_path).exists():
         st.image(img_path, width=380)
+        if shown:
+            st.caption("original crop")
+        shown = True
+    if shown:
         cap = d.get("description") or ""
         if cap:
             st.caption(cap)
     else:
-        # no crop available — fall back to the description
         st.markdown(f"_{d.get('location', '?')}_: {d.get('description', '')}")
 
 

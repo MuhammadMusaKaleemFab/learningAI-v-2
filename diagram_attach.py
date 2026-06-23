@@ -24,9 +24,11 @@ from typing import Optional
 try:
     from .crop import crop_bbox_from_file
     from .diagram_detect import detect_diagrams, is_available as _detect_available
+    from .vectorize import vectorize_to_png, is_available as _vec_available
 except ImportError:  # flat layout
     from crop import crop_bbox_from_file  # type: ignore[no-redef]
     from diagram_detect import detect_diagrams, is_available as _detect_available  # type: ignore[no-redef]
+    from vectorize import vectorize_to_png, is_available as _vec_available  # type: ignore[no-redef]
 
 
 def attach_diagram_crops(
@@ -35,6 +37,7 @@ def attach_diagram_crops(
     *,
     out_dir: Optional[str] = None,
     question_number: Optional[str] = None,
+    vectorize: bool = False,
 ) -> dict:
     """Return a copy of ``question`` with diagram crops detected and attached.
 
@@ -70,7 +73,7 @@ def attach_diagram_crops(
             described = by_image.get(img_idx, [])
 
             # crop + save every detected region for this image
-            crops: list[tuple[str, list[float]]] = []
+            crops: list[tuple[str, list[float], Optional[str]]] = []
             for reg in regions:
                 png = crop_bbox_from_file(img_path, reg.bbox, pad_frac=0.0)
                 if not png:
@@ -78,23 +81,27 @@ def attach_diagram_crops(
                 fname = f"diagram_{qtag}_img{img_idx}_{saved_counter}.png"
                 fpath = base / fname
                 fpath.write_bytes(png)
-                crops.append((str(fpath), reg.bbox))
+                vpath = None
+                if vectorize and _vec_available():
+                    vpath = vectorize_to_png(str(fpath))  # sharp-lines render, or None
+                crops.append((str(fpath), reg.bbox, vpath))
                 saved_counter += 1
 
             if described and crops and len(described) == len(crops):
                 # exact 1:1 (the common case) — pair in order
-                for d, (path, bbox) in zip(described, crops):
+                for d, (path, bbox, vpath) in zip(described, crops):
                     d["image_path"] = path
                     d["detected_bbox"] = bbox
+                    d["vector_path"] = vpath
                     result_diagrams.append(d)
             elif described and crops:
                 # counts differ — attach first crop to each described diagram,
                 # then append any leftover crops as standalone diagrams
                 for i, d in enumerate(described):
                     if i < len(crops):
-                        d["image_path"], d["detected_bbox"] = crops[i]
+                        d["image_path"], d["detected_bbox"], d["vector_path"] = crops[i]
                     result_diagrams.append(d)
-                for path, bbox in crops[len(described):]:
+                for path, bbox, vpath in crops[len(described):]:
                     result_diagrams.append({
                         "location": described[0].get("location", "unknown"),
                         "kind": described[0].get("kind"),
@@ -103,13 +110,14 @@ def attach_diagram_crops(
                         "source_image_index": img_idx,
                         "image_path": path,
                         "detected_bbox": bbox,
+                        "vector_path": vpath,
                     })
             elif described and not crops:
                 # detector found nothing on this image — keep descriptions as-is
                 result_diagrams.extend(described)
             elif crops and not described:
                 # detector found figures Claude didn't describe — keep them
-                for path, bbox in crops:
+                for path, bbox, vpath in crops:
                     result_diagrams.append({
                         "location": "unknown",
                         "kind": None,
@@ -118,6 +126,7 @@ def attach_diagram_crops(
                         "source_image_index": img_idx,
                         "image_path": path,
                         "detected_bbox": bbox,
+                        "vector_path": vpath,
                     })
 
         # carry over any diagrams whose source_image_index was out of range

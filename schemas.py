@@ -57,6 +57,7 @@ class Diagram(BaseModel):
     source_image_index: Optional[int] = None  # which input image (0-based) this diagram is on
     bbox: Optional[list[float]] = None  # [x_min, y_min, x_max, y_max] as fractions 0-1 of that image (from Claude; unreliable)
     image_path: Optional[str] = None  # local path to the saved cropped diagram PNG (filled by the detector)
+    vector_path: Optional[str] = None  # local path to a vectorized (sharp-lines) render of the crop, if generated
     detected_bbox: Optional[list[float]] = None  # [x_min,y_min,x_max,y_max] fractions, from the layout detector (reliable)
 
     @field_validator("bbox")
